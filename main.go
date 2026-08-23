@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	//	"net/textproto"
 	"sync/atomic"
 )
@@ -49,6 +50,25 @@ func (config *apiConfig) resetCounter(w http.ResponseWriter, req *http.Request) 
 	w.Write([]byte(hits))
 }
 
+func replaceBadWords(s string) string {
+
+	words := strings.Split(s, " ")
+	for i, word := range words {
+		if strings.ToLower(word) == "kerfuffle" {
+			words[i] = "****"
+		}
+		if strings.ToLower(word) == "sharbert" {
+			words[i] = "****"
+		}
+		if strings.ToLower(word) == "fornax" {
+			words[i] = "****"
+		}
+
+	}
+	return strings.Join(words, " ")
+
+}
+
 func (config *apiConfig) chirpValidator(w http.ResponseWriter, r *http.Request) {
 
 	type chirpBody struct {
@@ -87,16 +107,24 @@ func (config *apiConfig) chirpValidator(w http.ResponseWriter, r *http.Request) 
 	} else {
 		w.Header().Set("Content-Type", "text/josn; charset=utf-8")
 		w.WriteHeader(200)
-		respBody := validBody{
-			Valid: true,
+
+		type cleanChirp struct {
+			Cleaned_body string `json:"cleaned_body"`
 		}
-		dat, err := json.Marshal(respBody)
+
+		cleaned_chirp := cleanChirp{}
+
+		cleaned_chirp.Cleaned_body = replaceBadWords(chirp.Body)
+
+		jsonData, err := json.Marshal(cleaned_chirp)
+
 		if err != nil {
 			log.Printf("error marshalling json: %s", err)
 		}
-		w.Write(dat)
-	}
 
+		w.Write(jsonData)
+
+	}
 }
 
 func main() {

@@ -32,6 +32,14 @@ type User struct {
 	Email     string    `json:"email"`
 }
 
+type Chirp struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body      string    `json:"body"`
+	UserID    uuid.UUID `json:"user_id"`
+}
+
 func (config *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		config.fileServerHits.Add(1)
@@ -59,21 +67,24 @@ func (config *apiConfig) requestCounter(w http.ResponseWriter, req *http.Request
 	w.Write([]byte(hits))
 }
 
-func (config *apiConfig) resetCounter(w http.ResponseWriter, r *http.Request) {
+func (config *apiConfig) resetHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 
 	if config.platform == "dev" {
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(200)
 		config.fileServerHits.Store(0)
 		hits := fmt.Sprintf("Hits: %v", config.fileServerHits.Load())
 
 		err := config.queries.DeleteUsers(r.Context())
-
 		if err != nil {
 			log.Printf("error deleting users table: %s", err)
 		}
 
+		err = config.queries.DeleteChirps(r.Context())
+		if err != nil {
+			log.Printf("error deleting chirps table: %s", err)
+		}
 		w.Write([]byte(hits))
 	} else {
 		w.WriteHeader(http.StatusForbidden)
@@ -99,7 +110,7 @@ func replaceBadWords(s string) string {
 
 }
 
-func (config *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
+func (config *apiConfig) userHandler(w http.ResponseWriter, r *http.Request) {
 
 	type userEmail struct {
 		Email string `json:"email"`
@@ -144,8 +155,8 @@ func (config *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 func (config *apiConfig) chirpHandler(w http.ResponseWriter, r *http.Request) {
 
 	type chirpBody struct {
-		Body   string `json:"body"`
-		userID string `json:"user_id"`
+		Body   string    `json:"body"`
+		UserID uuid.UUID `json:"user_id"`
 	}
 
 	type errorBody struct {
@@ -179,7 +190,7 @@ func (config *apiConfig) chirpHandler(w http.ResponseWriter, r *http.Request) {
 		w.Write(dat)
 	} else {
 		w.Header().Set("Content-Type", "text/josn; charset=utf-8")
-		w.WriteHeader(200)
+		w.WriteHeader(201)
 
 		type cleanChirp struct {
 			Cleaned_body string `json:"cleaned_body"`
@@ -190,6 +201,30 @@ func (config *apiConfig) chirpHandler(w http.ResponseWriter, r *http.Request) {
 		cleaned_chirp.Cleaned_body = replaceBadWords(chirp.Body)
 
 		dat, err := json.Marshal(cleaned_chirp)
+
+		if err != nil {
+			log.Printf("error marshalling json: %s", err)
+		}
+
+		args := database.CreateChirpParams{}
+		args.Body = chirp.Body
+		args.UserID = chirp.UserID
+
+		newChirp, err := config.queries.CreateChirp(r.Context(), args)
+
+		if err != nil {
+			log.Printf("error creating new user: %s", err)
+		}
+
+		jsonChirp := Chirp{
+			ID:        newChirp.ID,
+			CreatedAt: newChirp.CreatedAt,
+			UpdatedAt: newChirp.UpdatedAt,
+			Body:      newChirp.Body,
+			UserID:    newChirp.UserID,
+		}
+
+		dat, err = json.Marshal(jsonChirp)
 
 		if err != nil {
 			log.Printf("error marshalling json: %s", err)
@@ -231,10 +266,9 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", readinessHandler)
 
 	mux.HandleFunc("GET /admin/metrics", (&config).requestCounter)
-	mux.HandleFunc("POST /admin/reset", (&config).resetCounter)
-	mux.HandleFunc("POST /api/validate_chirp", (&config).chirpValidator)
+	mux.HandleFunc("POST /admin/reset", (&config).resetHandler)
 	mux.HandleFunc("POST /api/chirps", (&config).chirpHandler)
-	mux.HandleFunc("POST /api/users", (&config).createUser)
+	mux.HandleFunc("POST /api/users", (&config).userHandler)
 
 	server.ListenAndServe()
 

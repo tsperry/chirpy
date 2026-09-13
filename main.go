@@ -152,7 +152,7 @@ func (config *apiConfig) userHandler(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func (config *apiConfig) chirpHandler(w http.ResponseWriter, r *http.Request) {
+func (config *apiConfig) postChirpHandler(w http.ResponseWriter, r *http.Request) {
 
 	type chirpBody struct {
 		Body   string    `json:"body"`
@@ -235,6 +235,84 @@ func (config *apiConfig) chirpHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (config *apiConfig) getChirpsHandler(w http.ResponseWriter, r *http.Request) {
+
+	w.Header().Set("Content-Type", "text/josn; charset=utf-8")
+	w.WriteHeader(200)
+
+	chirps, err := config.queries.GetChirps(r.Context())
+
+	if err != nil {
+		log.Printf("error creating getting chirps: %s", err)
+	}
+
+	var jsonChirps []Chirp
+
+	for _, chirp := range chirps {
+
+		jsonChirp := Chirp{
+			ID:        chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body:      chirp.Body,
+			UserID:    chirp.UserID,
+		}
+
+		jsonChirps = append(jsonChirps, jsonChirp)
+	}
+
+	dat, err := json.Marshal(jsonChirps)
+
+	if err != nil {
+		log.Printf("error marshalling json: %s", err)
+	}
+	w.Write(dat)
+
+}
+
+func (config *apiConfig) getChirpHandler(w http.ResponseWriter, r *http.Request) {
+
+	w.Header().Set("Content-Type", "text/josn; charset=utf-8")
+
+	chirpID := r.PathValue("chirpID")
+
+	parsedID, err := uuid.Parse(chirpID)
+	if err != nil {
+		log.Printf("error parsing uuid: %s", err)
+	}
+
+	chirp, err := config.queries.GetChirp(r.Context(), parsedID)
+
+	if err != nil {
+		log.Printf("error creating getting chirp: %s", err)
+	}
+
+	// log.Printf("parsedID: %parsedID", parsedID)
+	//
+	if chirp.ID == parsedID {
+		w.WriteHeader(200)
+	} else {
+		w.WriteHeader(404)
+		return
+	}
+
+	jsonChirp := Chirp{
+		ID:        chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body:      chirp.Body,
+		UserID:    chirp.UserID,
+	}
+
+	dat, err := json.Marshal(jsonChirp)
+
+	if err != nil {
+		log.Printf("error marshalling json: %s", err)
+	}
+	w.Write(dat)
+
+}
+
 func main() {
 
 	godotenv.Load()
@@ -267,7 +345,9 @@ func main() {
 
 	mux.HandleFunc("GET /admin/metrics", (&config).requestCounter)
 	mux.HandleFunc("POST /admin/reset", (&config).resetHandler)
-	mux.HandleFunc("POST /api/chirps", (&config).chirpHandler)
+	mux.HandleFunc("GET /api/chirps", (&config).getChirpsHandler)
+	mux.HandleFunc("GET /api/chirps/{chirpID}", (&config).getChirpHandler)
+	mux.HandleFunc("POST /api/chirps", (&config).postChirpHandler)
 	mux.HandleFunc("POST /api/users", (&config).userHandler)
 
 	server.ListenAndServe()

@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"github.com/tsperry/chirpy/internal/auth"
 	"github.com/tsperry/chirpy/internal/database"
 )
 
@@ -56,7 +57,7 @@ func readinessHandler(w http.ResponseWriter, req *http.Request) {
 func (config *apiConfig) requestCounter(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	hits := fmt.Sprintf(`	
+	hits := fmt.Sprintf(`
 	<html>
 		  <body>
 			<h1>Welcome, Chirpy Admin</h1>
@@ -112,12 +113,13 @@ func replaceBadWords(s string) string {
 
 func (config *apiConfig) userHandler(w http.ResponseWriter, r *http.Request) {
 
-	type userEmail struct {
-		Email string `json:"email"`
+	type newUserParams struct {
+		Password string `json:"password"`
+		Email    string `json:"email"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
-	user := userEmail{}
+	user := newUserParams{}
 	err := decoder.Decode(&user)
 
 	if err != nil {
@@ -126,10 +128,20 @@ func (config *apiConfig) userHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var u database.CreateUserParams
+
+	u.Email = user.Email
+
+	hashedPassword, err := auth.HashPassword(user.Password)
+	if err != nil {
+		log.Printf("error hashing password: %s", err)
+	}
+	u.HashedPassword = hashedPassword
+
 	w.Header().Set("Content-Type", "text/josn; charset=utf-8")
 	w.WriteHeader(201)
 
-	newUser, err := config.queries.CreateUser(r.Context(), user.Email)
+	newUser, err := config.queries.CreateUser(r.Context(), u)
 
 	if err != nil {
 		log.Printf("error creating new user: %s", err)
@@ -150,6 +162,53 @@ func (config *apiConfig) userHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Write(jsonData)
 
+}
+
+func (config *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request) {
+
+	type loginParams struct {
+		Password string `json:"password"`
+		Email    string `json:"email"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	user := loginParams{}
+	err := decoder.Decode(&user)
+
+	if err != nil {
+		log.Printf("Error parsing user: %s", err)
+		w.WriteHeader(500)
+		return
+	}
+
+	loginUser, err := config.queries.LoginUser(r.Context(), user.Email)
+
+	correctLogin, err := auth.CheckPasswrodHash(user.Password, loginUser.HashedPassword)
+
+	if err != nil {
+		log.Printf("error checking password: %s", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/josn; charset=utf-8")
+	if !correctLogin {
+		w.WriteHeader(401)
+		return
+	}
+	w.WriteHeader(200)
+	jsonUser := User{
+		ID:        loginUser.ID,
+		CreatedAt: loginUser.CreatedAt,
+		UpdatedAt: loginUser.UpdatedAt,
+		Email:     loginUser.Email,
+	}
+
+	jsonData, err := json.Marshal(jsonUser)
+
+	if err != nil {
+		log.Printf("error marshalling json: %s", err)
+	}
+	w.Write(jsonData)
 }
 
 func (config *apiConfig) postChirpHandler(w http.ResponseWriter, r *http.Request) {
@@ -349,6 +408,7 @@ func main() {
 	mux.HandleFunc("GET /api/chirps/{chirpID}", (&config).getChirpHandler)
 	mux.HandleFunc("POST /api/chirps", (&config).postChirpHandler)
 	mux.HandleFunc("POST /api/users", (&config).userHandler)
+	mux.HandleFunc("POST /api/login", (&config).loginHandler)
 
 	server.ListenAndServe()
 

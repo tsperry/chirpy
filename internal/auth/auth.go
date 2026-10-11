@@ -1,13 +1,8 @@
-// auth package
-//
-//
-
 package auth
 
 import (
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/alexedwards/argon2id"
@@ -22,52 +17,53 @@ const (
 	TokenTypeAccess TokenType = "chirpy-access"
 )
 
+// HashPassword -
 func HashPassword(password string) (string, error) {
-
 	hash, err := argon2id.CreateHash(password, argon2id.DefaultParams)
 	if err != nil {
-		fmt.Printf("error hashing password: %s", err)
+		return "", err
 	}
-
-	return hash, err
-
+	return hash, nil
 }
 
-func CheckPasswrodHash(password, hash string) (bool, error) {
-
-	matched, err := argon2id.ComparePasswordAndHash(password, hash)
+// CheckPasswordHash -
+func CheckPasswordHash(password, hash string) (bool, error) {
+	match, err := argon2id.ComparePasswordAndHash(password, hash)
 	if err != nil {
-		fmt.Printf("error comparing password and hash: %s", err)
+		return false, err
 	}
-	return matched, err
-
+	return match, nil
 }
 
-func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (string, error) {
-
-	var claims jwt.RegisteredClaims
-	claims.Issuer = string(TokenTypeAccess)
-	claims.IssuedAt = jwt.NewNumericDate(time.Now().UTC())
-	claims.ExpiresAt = jwt.NewNumericDate(time.Now().UTC().Add(expiresIn))
-	claims.Subject = userID.String()
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(tokenSecret))
-
+// MakeJWT -
+func MakeJWT(
+	userID uuid.UUID,
+	tokenSecret string,
+	expiresIn time.Duration,
+) (string, error) {
+	signingKey := []byte(tokenSecret)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Issuer:    string(TokenTypeAccess),
+		IssuedAt:  jwt.NewNumericDate(time.Now().UTC()),
+		ExpiresAt: jwt.NewNumericDate(time.Now().UTC().Add(expiresIn)),
+		Subject:   userID.String(),
+	})
+	return token.SignedString(signingKey)
 }
 
+// ValidateJWT -
 func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
-
-	var claims jwt.RegisteredClaims
-
-	token, err := jwt.ParseWithClaims(tokenString,
-		&claims,
-		func(token *jwt.Token) (interface{}, error) { return []byte(tokenSecret), nil })
+	claimsStruct := jwt.RegisteredClaims{}
+	token, err := jwt.ParseWithClaims(
+		tokenString,
+		&claimsStruct,
+		func(token *jwt.Token) (interface{}, error) { return []byte(tokenSecret), nil },
+	)
 	if err != nil {
 		return uuid.Nil, err
 	}
 
-	subject, err := token.Claims.GetSubject()
+	userIDString, err := token.Claims.GetSubject()
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -76,15 +72,13 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	if err != nil {
 		return uuid.Nil, err
 	}
-
 	if issuer != string(TokenTypeAccess) {
 		return uuid.Nil, errors.New("invalid issuer")
 	}
 
-	subjectUUID, err := uuid.Parse(subject)
+	id, err := uuid.Parse(userIDString)
 	if err != nil {
-		log.Printf("error parsing subject UUID: %s", err)
+		return uuid.Nil, fmt.Errorf("invalid user ID: %w", err)
 	}
-
-	return subjectUUID, err
+	return id, nil
 }
